@@ -51,8 +51,8 @@ function validateResponse(isFault) {
 }
 
 async function verifyDomain() {
-  const hostname = new URL(`https://${a_value}`).hostname; // Will throw error if invalid url
-  if(!hostname.includes(".")) throw new Error() // Prevent hostname lacking tld
+  const hostname = new URL(`https://${a_value}`).hostname
+  if(!hostname.includes(".")) throw new Error()
 
   const dohProvider = `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(hostname)}&type=TXT`
 
@@ -81,7 +81,7 @@ async function verifyDomain() {
 async function verifyX() {
   const postId = a_value
 
-  if (!/^\d+$/.test(postId)) { // Must be numbers only
+  if (!/^\d+$/.test(postId)) {
     throw new Error("Invalid X post ID")
   }
 
