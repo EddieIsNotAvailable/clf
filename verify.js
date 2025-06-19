@@ -1,142 +1,80 @@
-if (!args || args.length < 2) {
-  throw new Error("Missing args")
-}
+if (!args || args.length < 2 || !bytesArgs || bytesArgs.length < 1) throw new Error('Missing args');
 
-const a_type = args[0]
-const a_value = args[1]
+const a_type = args[0];
+const a_value = args[1];
+const id = `w3id=${bytesArgs[0]}`;
 
-if (!bytesArgs || bytesArgs.length < 1) {
-  throw new Error("Missing bytesArgs")
-}
-
-// Verified msg.sender address
-// Will be a lowercase hex string of the bytes
-const a_address = bytesArgs[0]
-
-return Functions.encodeString(await verifyRequest())
-
-// ---Function Definitions---
+return Functions.encodeString(await verifyRequest());
 
 async function verifyRequest() {
   switch (a_type) {
-    case "domain":
-      return verifyDomain()
-    case "x":
-      return verifyX()
-    case "github":
-      return verifyGithub()
+    case 'domain':
+      return verifyDomain();
+    case 'x':
+      return verifyX();
+    case 'github':
+      return verifyGithub();
     default:
-      throw new Error("Bad type")
+      throw new Error('Bad type');
   }
 }
 
-function makeId() {
-  return "w3id=" + a_address
-}
-
-function verifyIDInString(text) {
-  if (!text.includes(makeId())) throw new Error("Invalid")
-}
-
-function checkErrorAndThrow(resp) {
-  if (resp.error || !resp.data || resp.status !== 200) {
-    throw new Error("Request failed")
-  }
-}
-
-function validateResponse(isFault) {
-  if (isFault) {
-    throw new Error("Malformed response")
-  }
+function checkError(resp, isFault) {
+  if (resp.error || isFault) throw new Error('Request failed');
 }
 
 async function verifyDomain() {
-  const hostname = new URL(`https://${a_value}`).hostname
-  if(!hostname.includes(".")) throw new Error()
-
-  const dohProvider = `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(hostname)}&type=TXT`
+  const hostname = new URL(`https://${a_value}`).hostname;
+  if(!hostname.includes('.')) throw new Error();
 
   const resp = await Functions.makeHttpRequest({
-    url: dohProvider,
-    headers: {
-      'Accept': 'application/dns-json'
-    }
-  })
+    url: `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(hostname)}&type=TXT`,
+    headers: { 'Accept': 'application/dns-json' }
+  });
 
-  checkErrorAndThrow(resp)
-  
-  const data = resp.data
-  validateResponse(!data.Answer || !Array.isArray(data.Answer))
+  checkError(resp, !resp.data || !resp.data.Answer || !Array.isArray(resp.data.Answer) || !resp.data.Answer.some(record => record.data.includes(id)));
 
-  const id = makeId()
-
-  if (data.Answer.some(record => record.data.includes(id))) {
-    return hostname
-  }
-
-  throw new Error("Invalid")
+  return hostname;
 }
 
-
 async function verifyX() {
-  const postId = a_value
-
-  if (!/^\d+$/.test(postId)) {
-    throw new Error("Invalid X post ID")
-  }
+  if (!/^\d+$/.test(a_value)) throw new Error('Invalid post ID');
 
   const resp = await Functions.makeHttpRequest({
-    url: `https://publish.twitter.com/oembed?url=https://twitter.com/i/status/${postId}&hide_media=1&hide_thread=1&omit_script=1&dnt=1`
-  })
+    url: `https://publish.twitter.com/oembed?url=https://twitter.com/i/status/${a_value}&hide_media=1&hide_thread=1&omit_script=1&dnt=1`
+  });
 
-  checkErrorAndThrow(resp, "Twitter oEmbed")
+  checkError(resp, !resp.data || !resp.data.author_url || !resp.data.html);
 
-  const data = resp.data
-  validateResponse(!data.author_url || !data.html)
+  const textMatch = resp.data.html.match(/<p[^>]*>(.*?)<\/p>/s);
 
-  // Extract tweet message, should be in the p element
-  const textMatch = data.html.match(/<p[^>]*>(.*?)<\/p>/s)
+  if (!textMatch || textMatch.length < 2) throw new Error('Invalid html');
   
   const text = textMatch[1]
-    .replace(/<(\w+)(\s[^>]*)?>.*?<\/\1>/gs, '') // Remove child HTML elements and their content
-    .replace(/<[^>]*\/>/g, '') // Remove self-closing tags
-    .replace(/<[^>]*>/g, '') // Remove remaining HTML tags
+    .replace(/<(\w+)(\s[^>]*)?>.*?<\/\1>/gs, '')
+    .replace(/<[^>]*\/>/g, '')
+    .replace(/<[^>]*>/g, '')
     .trim()
-    .toLowerCase()
+    .toLowerCase();
   
-  verifyIDInString(text)
+  if (!text.includes(id)) throw new Error('Invalid');
 
-  const handle = data.author_url.split("/").pop().toLowerCase()
-
-  return handle
+  return resp.data.author_url.split('/').pop().toLowerCase();
 }
 
 async function verifyGithub() {
-  const username = a_value.toLowerCase()
+  const username = a_value.toLowerCase();
 
-  if(!(/^[a-z0-9]([a-z0-9]|-(?!-))*[a-z0-9]$|^[a-z0-9]$/.test(username) && username.length <= 39)) {
-    throw new Error("Invalid GitHub username")
+  if(username.length > 39 || !(/^[a-z0-9]([a-z0-9]|-(?!-))*[a-z0-9]$|^[a-z0-9]$/.test(username))) {
+    throw new Error('Invalid GitHub username');
   }
 
   const resp = await Functions.makeHttpRequest({
     url: `https://api.github.com/users/${username}`,
-    headers: { 
-      'X-GitHub-Api-Version': '2022-11-28'
-    }
-  })
+    headers: { 'X-GitHub-Api-Version': '2022-11-28' }
+  });
 
-  checkErrorAndThrow(resp, "GitHub API")
+  checkError(resp, !resp.data || !resp.data.login || !resp.data.bio || resp.data.login.toLowerCase() !== username || !resp.data.bio.includes(id));
 
-  const data = resp.data
-
-  validateResponse(!data.login || !data.bio)
-
-  // Login is case insensitive
-  if (data.login.toLowerCase() !== username) {
-    throw new Error("GitHub username mismatch")
-  }
-
-  verifyIDInString(data.bio)
-
-  return username
+  return username;
 }
